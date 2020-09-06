@@ -6,7 +6,14 @@ library("dplyr")
 library("plyr")
 
 #read the meta data and edge list files
+coPurchaseMeta <- read.csv("coPurchaseMetaNew.csv")
+coPurchaseEdgeList<-read.csv("coPurchaseEdgeList.csv")
 
+#Calculate weights based on the average rating of vertices
+cp1<-merge(coPurchaseEdgeList,coPurchaseMeta[,c(1,7)],by.x="ToNodeId",by.y="NodeId")
+cp2<-merge(cp1,coPurchaseMeta[,c(1,7)],by.x="FromNodeId",by.y="NodeId")
+cp2$weight<-(cp2$AverageRating.x+cp2$AverageRating.y)/2
+coPurchaseEdgeList<-cp2[,c("FromNodeId","ToNodeId","weight")]
 
 ##CONDUCTANCE FUNCTION
 intra <- 0
@@ -23,3 +30,68 @@ conductance <- function(g, memb) {
 
 # Create igraph
 coPurchaseNetworkGraph <- graph.data.frame(d = coPurchaseEdgeList, vertices = coPurchaseMeta,directed = F) 
+
+## Community detection algorithms
+#Leading Eigen Vector
+clus_eigen <- cluster_leading_eigen(as.undirected(coPurchaseNetworkGraph), weights = E(coPurchaseNetworkGraph)$weight)
+mod_eigen <- modularity(as.undirected(coPurchaseNetworkGraph), membership(clus_eigen), weight = E(coPurchaseNetworkGraph)$weight)
+con_eigen <- conductance(as.undirected(coPurchaseNetworkGraph), membership(clus_eigen))
+
+#INFOMAP
+clus_info <- cluster_infomap(coPurchaseNetworkGraph, e.weights = E(coPurchaseNetworkGraph)$weight)
+mod_info <- modularity( coPurchaseNetworkGraph, membership(clus_info), weight = E(coPurchaseNetworkGraph)$weight)
+con_info <- conductance(coPurchaseNetworkGraph, membership(clus_info))
+
+#FAST GREEDY
+clus_fast <- cluster_fast_greedy(coPurchaseNetworkGraph, weight = E(coPurchaseNetworkGraph)$weight)
+mod_fast <- modularity( coPurchaseNetworkGraph, membership(clus_fast), weight = E(coPurchaseNetworkGraph)$weight )
+con_fast <-  conductance(coPurchaseNetworkGraph, membership(clus_fast))
+
+#LOUVAIN
+clus_louvain <- cluster_louvain(coPurchaseNetworkGraph, weights = E(coPurchaseNetworkGraph)$weight)
+mod_louvain <- modularity( coPurchaseNetworkGraph, membership(clus_louvain), weight = E(coPurchaseNetworkGraph)$weight)
+con_louvain <- conductance(coPurchaseNetworkGraph, membership(clus_louvain))
+
+#Create a data frame to compare the algorithms
+algo_vec <- as.vector(c("clus_fast", "clus_eigen", "clus_info", "clus_louvain"))
+mod_vec <- as.vector(c("mod_fast", "mod_eigen", "mod_info", "mod_louvain"))
+con_vec <- as.vector(c("con_fast", "con_eigen", "con_info", "con_louvain"))
+algo_metrics <- data.frame( algo = as.character(), community_count = as.numeric(), modularity = as.numeric(), conductance = as.numeric())
+
+for (i in 1:4) {
+  algo_metrics[i, "algo"] <- algorithm(get(algo_vec[i]))
+  algo_metrics[i, "community_count"] <- length(get(algo_vec[i]))
+  algo_metrics[i, "modularity"] <- get(mod_vec[i])
+  algo_metrics[i, "conductance"] <- get(con_vec[i])
+}
+
+######## TOP COMMUNITY DETECTION using LOUVAIN
+V(coPurchaseNetworkGraph)$community <- membership(clus_louvain)
+
+# Get data of community of each node
+communities_louvain <- communities(clus_louvain)
+temp <- data.frame(Node = as.character(), Community = as.character())
+node_comm <- data.frame(Node = as.character(), Community = as.character())
+
+#Get node to community mapping
+for (i in 1:length(communities_louvain)) {
+  for (j in 1:length(communities_louvain[[i]])) {
+    temp[1, 1] <- communities_louvain[[i]][j]
+    temp[1, 2] <- i
+    node_comm <- rbind(node_comm, temp)
+  }
+}
+
+#strength of each node
+node_strength <-data.frame(strength(coPurchaseNetworkGraph,vids = V(coPurchaseNetworkGraph),mode = "total",loops = FALSE,weights = E(coPurchaseNetworkGraph)$weight))
+colnames(node_strength) <- "strength"
+node_strength <- tibble::rownames_to_column(node_strength, "Node")
+
+#Calculate average strength of each community to get top community
+node_community_strength <- merge(node_comm, node_strength, by = "Node")
+
+#Sort and rank the communities by decreasing strength
+community_strength <- ddply(node_community_strength, c("Community"), summarise, mean_strength = mean(strength), nodes = length(Node))
+community_strength$importance <- community_strength$mean_strength * community_strength$nodes
+community_strength <- community_strength[order(community_strength$importance, decreasing = T), ]
+community_strength$Rank <- 1:nrow(community_strength)
