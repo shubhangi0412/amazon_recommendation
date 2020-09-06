@@ -1,0 +1,88 @@
+#Data Preparation
+
+library("igraph")
+library("data.table")
+library("sqldf")
+library("tidyr")
+library("dplyr")
+library("plyr")
+library("stringr")
+
+#set working directory
+setwd("D:/Master/Data")
+
+#load the text file with every new line is new row
+system.time(amazonmeta <- read.table("amazon-meta.txt", sep = ",", quote = ""))
+
+#filter the rows having the information of id, title, reviews, books, salesrank and group
+filteredRawData <- sqldf(
+    "select * from amazonmeta where trim(V1) like 'Id%' or trim(V1)like 'title%' or trim(V1) like 'reviews%' or trim(V1) like '%books%' or trim(V1) like 'salesrank%' or trim(V1) like 'group%'"
+  )
+
+rm(amazonmeta)
+
+#split on the delimiter to get two columns of the attribute and the value
+filteredRawData1 <- separate(data = filteredRawData, col = V1, into = c("attribute", "Id"), sep = "Id:   ", extra = "merge")
+
+filteredRawData1$attribute <- ifelse(!is.na(filteredRawData1$Id), "Id", filteredRawData1$attribute)
+filteredRawData1 <- fill(filteredRawData1, Id)
+filteredRawData1 <- sqldf("select  trim(attribute) key ,trim(Id) Id from filteredRawData1")
+
+#filter records containing books
+books <- filteredRawData1[filteredRawData1$key == "group: Book", c(2)]
+
+filteredRawData1 <- filteredRawData1[filteredRawData1$Id %in% books, ]
+rm(books)
+
+#get data of product categories
+category1 <- sqldf("select * from filteredRawData1 where key like '%books%' and key not like 'title: %'")
+category2 <- data.frame(str_split_fixed(category1$key, "]", 4))
+category3 <- data.frame(str_split_fixed(category2$X3, "\\[", 2))
+category4 <- cbind(category1, category3)
+
+#remove special characters from category
+category4$category <- gsub("[^[:alnum:][:blank:]&/\\-\\']", "", category4$X1)
+category4$X2 <- as.integer(category4$X2)
+category5 <- category4[order(category4$Id, category4$X2, decreasing = TRUE), c("Id", "X2", "category")]
+category <- category5[!duplicated(category5$Id), c("Id", "category")]
+
+#analyse distribution of books in categories
+cat_no <- ddply(category, "category", summarise, count = length(Id))
+cat_no$share <- round(cat_no$count * 100 / sum(cat_no$count), 4)
+
+#Get data of title, reviews and sales rank
+filteredRawData2 <- sqldf("select * from filteredRawData1 where key like 'title:%' or key like 'reviews:%' or key like 'salesrank:%'" )
+  
+#separate column by delimiter
+filteredRawData3 <- separate(data = filteredRawData2, col = "key", into = c("Key", "value"), sep = "\\:", extra = "merge")
+
+filteredRawData4 <- spread(filteredRawData3, Key, value)
+filteredRawData5 <- merge(filteredRawData4, category, by = "Id", all.x = T)
+
+#divide the review column data to extract the averagerating
+tempdata <- data.frame(str_split_fixed(filteredRawData5$reviews, ' ', 10))
+
+#add the average rating to the copurchaseproduct
+filteredRawData5$averagerating <- tempdata$X10
+filteredRawData5$total <- tempdata$X3
+filteredRawData5$downloaded <- tempdata$X6
+
+#final filtered data
+filteredRawData <-filteredRawData5[, c("Id", "title", "category", "salesrank", "downloaded", "total", "averagerating")]
+colnames(filteredRawData) <- c("NodeId","Title","Category","SalesRank","Downloads","Reviews","AverageRating")
+filteredRawData$SalesRank <- as.numeric(filteredRawData$SalesRank)
+filteredRawData$Category <- ifelse( filteredRawData$Category == "" | is.na(filteredRawData$Category), "Others", filteredRawData$Category)
+filteredRawData$NodeId <- as.numeric(filteredRawData$NodeId)
+
+#histogram of sales rank
+h <- hist(filteredRawData$SalesRank,main="Histogram of Sales Rank",xlab="Sales Rank")
+text(h$mids,h$counts,labels=h$counts, adj=c(0.5, -0.5))
+abline(v=mean(filteredRawData$SalesRank),col="red",lwd=2, lty=2)
+
+#Keep items with sales rank less than 100000
+coPurchaseMeta <-subset(filteredRawData, SalesRank > 0 & SalesRank < 100000)
+coPurchaseMeta <- coPurchaseMeta[order(coPurchaseMeta$NodeId), ]
+coPurchaseMeta$NodeId <- as.character(coPurchaseMeta$NodeId)
+
+#Export the csv of the meta data
+write.csv(coPurchaseMeta, "amazon_meta.csv", row.names = FALSE)
