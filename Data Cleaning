@@ -86,3 +86,20 @@ coPurchaseMeta$NodeId <- as.character(coPurchaseMeta$NodeId)
 
 #Export the csv of the meta data
 write.csv(coPurchaseMeta, "amazon_meta.csv", row.names = FALSE)
+
+#read  the edge list file
+originalEdgeList <- read.delim("Amazon0601.txt", header = FALSE, comment.char = "#")
+colnames(originalEdgeList) <- c("FromNodeId", "ToNodeId")
+
+#subset the node ids which are present in the meta data file
+coPurchaseEdgeList <- subset(originalEdgeList, (FromNodeId %in% coPurchaseMeta$NodeId) & (ToNodeId %in% coPurchaseMeta$NodeId) )
+
+#write the final csv for edge list data
+write.csv(coPurchaseEdgeList, "coPurchaseEdgeList.csv", row.names = FALSE)
+
+#check if all the nodes are present in the edge list, if not, remove those and write an updates csv for the meta data file
+coPurchaseMetaNew <-subset(coPurchaseMeta, (NodeId %in% coPurchaseEdgeList$FromNodeId) | (NodeId %in% coPurchaseEdgeList$ToNodeId) )
+coPurchaseMetaNew$NodeId <- as.character(coPurchaseMetaNew$NodeId)
+
+write.csv(coPurchaseMetaNew, "coPurchaseMetaNew.csv", row.names = FALSE)
+
