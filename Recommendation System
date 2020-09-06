@@ -1,0 +1,122 @@
+library("igraph")
+library("data.table")
+library("sqldf")
+library("tidyr")
+library("dplyr")
+library("plyr")
+
+#read the meta data, edge list and node community strength files
+coPurchaseMeta <- read.csv("coPurchaseMetaNew.csv")
+coPurchaseEdgeList<-read.csv("coPurchaseEdgeList.csv")
+node_comm_strength<-read.csv("node_community_strength.csv")
+
+#Create a file of node properties such as meta data and details of community
+rec_raw <- merge( coPurchaseMeta, node_comm_strength, by.x = "NodeId", by.y = "Node", all.x = T)
+
+#Create a function for book recommendation
+
+BookRecommendation = function(productNodeId) {
+  #Get community of the book and the other books in that community
+  communityMembership = as.numeric(rec_raw[rec_raw$NodeId == productNodeId, "Community"])
+  subv <- rec_raw[rec_raw$Community == communityMembership, 1]
+  
+  # Create a subgraph for the given community from the main network graph
+  communityGraph <- induced.subgraph(coPurchaseNetworkGraph, vids = subv)
+  
+  # Identify cliques from the community graph. The output is a list object consisting of vectors of vertices of cliques
+  CliqueVertexList = maximal.cliques(communityGraph, min = 2, max = 5)
+  
+  # Convert the vector of vertices for a given clique to graph object and save it to list object
+  CliqueList <- lapply(CliqueVertexList, function (x) { induced_subgraph(communityGraph, x) })
+  
+  # Check if the given productNodeId is present within clique graph objects
+  ProductBasedCliqueFlagList = sapply(CliqueList, function(x) { as.vector(table(V(x)$name == productNodeId))[2] })
+  ProductBasedCliqueFlagList <- ifelse(is.na(ProductBasedCliqueFlagList), 0, 1)
+  
+  # Filter out all clique graph objects where productNodeId is present
+  ProductBasedCliqueList <- CliqueList[ProductBasedCliqueFlagList == 1]
+  
+  #Extract data from cliques
+  cliquesDataFrameList <- lapply(ProductBasedCliqueList,
+                                 function(y) {
+                                   as.data.frame(
+                                     list(
+                                       NodeId = as.numeric(V(y)$name),
+                                       Title = as.character(V(y)$Title),
+                                       Category = as.vector(V(y)$Category),
+                                       SalesRank =
+                                         as.numeric(V(y)$SalesRank),
+                                       Downloads = as.vector(V(y)$Downloads),
+                                       Reviews =
+                                         as.vector(V(y)$Reviews),
+                                       AverageRating = as.numeric(V(y)$AverageRating)
+                                     ) ,
+                                     stringsAsFactors = FALSE
+                                   )
+                                 })
+  cliqueDataFrame <- data.frame() 
+  tempCliqueFrame <- data.frame()
+  
+  for (i in 1:length(cliquesDataFrameList)) {
+    tempCliqueFrame <- cliquesDataFrameList[[i]]
+    cliqueDataFrame = rbind(cliqueDataFrame, tempCliqueFrame)
+  }
+  
+  #Get all the products that belong to the clique containing the book 
+  cliqueDataFrame <- unique(cliqueDataFrame[cliqueDataFrame$NodeId != productNodeId, ])
+  
+  #Check if the mategory is a match and rank books for recommendation 
+  book_cat <- rec_raw[rec_raw$NodeId == productNodeId, "Category"]
+  cat_match <- cliqueDataFrame[cliqueDataFrame$Category == book_cat, ]
+  cat_match <-cat_match[order(cat_match$AverageRating * cat_match$Downloads, cat_match$Reviews, decreasing = T), ]
+  
+  #for less than 2 matches, get books that are from the same clique but different category and rank them for recommendation
+  if (nrow(cat_match) < 2) {
+    rest <- cliqueDataFrame[cliqueDataFrame$Category != book_cat, ]
+    rest <-rest[order(rest$AverageRating * rest$Downloads, rest$Reviews, decreasing = T), ]
+    other_cat <- rest[1:(2 - nrow(cat_match)), ]
+    Rec <- rbind(cat_match, other_cat)
+  } else{
+    Rec <- cat_match
+  }
+  Rec <- Rec[complete.cases(Rec),]
+  
+  #for less than 2 matches, get books that are from the same category but different clique and rank them for recommendation
+  if (nrow(Rec) < 2) {
+    extra <- rec_raw[rec_raw$Category == book_cat & !(rec_raw$NodeId %in% Rec$NodeId) & rec_raw$NodeId != productNodeId, ]
+    extra <- extra[order(extra$AverageRating * extra$Downloads, extra$Reviews, decreasing = T), ]
+    rec_extra <- extra[1:(2 - nrow(Rec)), c(1:7)]
+    Rec1 <- rbind(Rec, rec_extra)
+  } else{
+    Rec1 <- Rec
+  }
+  Rec1 <- Rec1[complete.cases(Rec1),]
+  
+   #create the recommendation and rank all books. Add data for the book recommending for.
+  Rec2 <- rbind(rec_raw[rec_raw$NodeId == productNodeId, c(1:7)], Rec1)
+  Recommendation<-Rec2[c(1:3),]
+  
+  return(Recommendation)
+}
+
+#Providing recommendation for any Id, eg - 9954. The 1st book in the data frame will be the one we are recommending for.
+RecommendedBooks <- BookRecommendation(9954)
+write.csv(RecommendedBooks,"RecommendedBooks9954.csv")
+  
+n200<-coPurchaseMeta[sample(nrow(coPurchaseMeta), 200), ]
+Rec200<-data.frame()
+temp<-data.frame()
+
+#Providing recommendation for 200 random ids
+for(n in n200){
+  temp <- BookRecommendation(n)
+  temp$For<-n
+  Rec200<-rbind(Rec200,temp)
+}
+
+Rec1<-merge(Rec200[,c(1:3,8)],rec_raw[,c(1:3,9)],by.x=c(4),by.y=c(1),all.x=T)
+Rec2<-merge(Rec1,rec_raw[,c(1,9)],by.x=c(2),by.y=c(1),all.x=T)
+colnames(Rec2)<-c("RecNode","ForNode","RecTitle","RecCat","ForTitle","ForCat","ForCom","RecCom")
+Recommendation<-Rec2[Rec2$RecNode!=Rec2$ForNode,c(2,5:7,1,3:4,8)]
+
+write.csv(Recommendation,"Recommendation.csv")
