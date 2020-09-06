@@ -95,3 +95,6 @@ community_strength <- ddply(node_community_strength, c("Community"), summarise, 
 community_strength$importance <- community_strength$mean_strength * community_strength$nodes
 community_strength <- community_strength[order(community_strength$importance, decreasing = T), ]
 community_strength$Rank <- 1:nrow(community_strength)
+
+#write csv
+write.csv(node_community_strength,"node_community_strength.csv",row.names=F)
