@@ -1,0 +1,25 @@
+library("igraph")
+library("data.table")
+library("sqldf")
+library("tidyr")
+library("dplyr")
+library("plyr")
+
+#read the meta data and edge list files
+
+
+##CONDUCTANCE FUNCTION
+intra <- 0
+extra <- 0
+con <- vector()
+conductance <- function(g, memb) {
+  g2 <- make_clusters(g, memb)
+  for (i in 1:length(E(coPurchaseNetworkGraph))) {
+    ifelse(crossing(g2, g)[i] == FALSE, intra <- intra + 1, extra <-extra + 1)
+  }
+  con <- c(con, extra / (2 * intra + extra))
+  return(con)
+}
+
+# Create igraph
+coPurchaseNetworkGraph <- graph.data.frame(d = coPurchaseEdgeList, vertices = coPurchaseMeta,directed = F) 
