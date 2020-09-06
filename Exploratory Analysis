@@ -1,0 +1,31 @@
+#Read the files for metadata and edge list
+coPurchaseMeta <- read.csv("coPurchaseMetaNew.csv")
+coPurchaseEdgeList<-read.csv("coPurchaseEdgeList.csv")
+
+#Creating graph data frame for iGraph
+coPurchaseNetworkGraph <- graph.data.frame(d = coPurchaseEdgeList, directed = FALSE)
+
+#Exploratory Network Analysis
+summary(coPurchaseNetworkGraph)
+
+#Get the count of nodes and edges
+nodes <- vcount(coPurchaseNetworkGraph)
+edges <- ecount(coPurchaseNetworkGraph)
+
+#Propoerties of the network - nodes, density, diameter,mean distance, betweenness, closeness, eigen centrality, transitivity
+avg_degree <-  mean(degree(coPurchaseNetworkGraph, mode = 'total', loops = FALSE))
+density <- edge_density(coPurchaseNetworkGraph, loops = F)
+diameter <- diameter(coPurchaseNetworkGraph, directed = F, weights = NA)
+mean_dist <- mean_distance(coPurchaseNetworkGraph, directed = F)
+betweenss <- betweenness(coPurchaseNetworkGraph, directed = F, weights = NA)
+closenss <- closeness(coPurchaseNetworkGraph, mode = "all", weights = NA)
+eigen_cent <- eigen_centrality(coPurchaseNetworkGraph, directed = F, weights = NA)
+assortativity <- assortativity_degree(coPurchaseNetworkGraph, directed = F)
+transitivity <-  transitivity(coPurchaseNetworkGraph, type = "undirected")
+
+# category contributions and distribution of ratings 
+categories<-data.frame(table(coPurchaseMetaNew$Category))
+categories$contribution<-categories$Freq*100/sum(categories$Freq)
+
+ratings<-ddply(coPurchaseMetaNew,c(7),summarise,books=length(NodeId),sr=mean(SalesRank),minSR=min(SalesRank),maxsr=max(SalesRank))
+ratings$contr<-ratings$books*100/sum(ratings$books)
