@@ -1,3 +1,10 @@
+library("igraph")
+library("data.table")
+library("sqldf")
+library("tidyr")
+library("dplyr")
+library("plyr")
+
 #Read the files for metadata and edge list
 coPurchaseMeta <- read.csv("coPurchaseMetaNew.csv")
 coPurchaseEdgeList<-read.csv("coPurchaseEdgeList.csv")
